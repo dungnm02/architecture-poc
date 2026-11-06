@@ -108,18 +108,26 @@ document
     type                    registry key
     binding                 slot -> full data path, declared explicitly
     permissionKey
-    validation              local rules for this field
+    validation              slot -> local fragment for that slot
     defaultValue            create mode
+    label, help, props      presentation metadata
   rules
     visibility[]            condition -> field ids to hide
     cascades[]              condition -> writes to data paths
-  validations[]             cross-field rules, each with dependsOn
+                            effect: kind, target, source id, params
+  validations[]             cross-field rules: target + dependsOn
 ```
 
 Notes:
 
 - Binding paths are **full paths**, supplied by the backend. The frontend does
   not derive slot suffixes.
+- Validation is declared per slot, not one fragment per field. Cross-slot logic
+  goes through `validations[]`.
+- Cascade `effect.source` is a **source id** resolved by the frontend, never a
+  URL. `effect.params` lists the only data paths that may leave the client.
+- A repeat group declares `itemKey` (an optional stable item id path) and a
+  template of child fields with relative bindings.
 - Field order comes from the document. The frontend does not sort.
 - The document is versioned, immutable once published, and rolled back by
   version. The form stores the version it rendered.
@@ -131,16 +139,27 @@ Notes:
 Three inputs decide what a field shows. Resolve them in one place, in this order:
 
 ```text
-form.mode === VIEW            -> VIEW
 permission(field) missing     -> HIDDEN
+permission not EDIT or VIEW   -> HIDDEN   (allowlist, never truthy)
 visibility rule fails         -> HIDDEN
+ancestor group HIDDEN         -> HIDDEN
 permission(field) === VIEW    -> VIEW
+ancestor group VIEW           -> VIEW
+form.mode === VIEW            -> VIEW
 otherwise                     -> EDIT
 ```
 
+`permissionKey ?? fieldId` selects the grant. Grants are read through a `Map` or
+with an own-property check, never a plain-object lookup.
+
 **Invariant: the form can only demote, never promote.** A field never becomes
 editable because the form is editable; it also needs its own permission. Hidden
-beats view beats edit.
+beats view beats edit, and a hidden group hides every child.
+
+**Permission is not authorization.** The client loads entity values and submits
+hidden ones. A denied user can still read those values in the API response or
+the browser payload. This model is only safe if the server omits unauthorized
+values on read and enforces field-level authorization on write.
 
 Consequences that follow, and are therefore not separate rules:
 
@@ -172,47 +191,66 @@ rule
   then    effect[]
 ```
 
-- **Conditions**: JSON Logic for simple cases, the vocabulary for complex ones.
-  Both are JSON trees, so dependency collection and cycle detection work the same
-  way for each.
-- **Effects**: the vocabulary only, never JSON Logic. Effects need allowlisting,
+- **Conditions**: a frontend-owned, closed condition tree. The vocabulary is
+  fixed in code: `eq`, `neq`, `in`, `notIn`, `gt`, `gte`, `lt`, `lte`, `empty`,
+  `and`, `or`, `not`. Conditions are JSON trees, so dependency collection works
+  on every path they read.
+- **Effects**: the vocabulary only, never conditions. Effects need allowlisting,
   validation and static knowledge of what they touch.
 - **Fail closed.** An unknown operator or unknown effect rejects the rule and
-  records it. It is never ignored.
+  records a blocking issue. It is never ignored.
 
 ### Cascades
 
 - Fire only when the user edits the source. Never on load. Stored data that
   violates a current rule stays as it is until someone touches the source.
 - Always overwrite. The cascade wins over any value already in the target.
-- Write to a data path, to one or many targets.
+- Write to one or many **leaf** data paths. Container targets are rejected at
+  parse; there is no deep-merge semantics.
+- `effect.source` is a frontend source id, never a URL. Only the paths declared
+  in `effect.params` leave the client; never the whole form.
 - Blocked when the target is HIDDEN or VIEW at fire time.
-- Async: if the target is no longer effective EDIT when the result lands, discard
-  it. If the array containing the target was reordered meanwhile, the path now
-  points at a different item; re-resolve or cancel on array mutation.
+- Async: capture an epoch, a per-target run id, the source value and the item
+  identity. At landing, require all of them to still hold: the run is the latest
+  for the target, the epoch is current, the target is still effective EDIT, the
+  item key still matches, and `when` still holds. Otherwise discard.
+- Array mutation, reset, mode change, document change, submit and unmount bump
+  the epoch and abort pending runs. A normal abort is not an error.
 
 ### Visibility
 
 - Condition evaluates against current form data; the effect hides field ids.
 - Evaluated on every data change, not only on the source field's edit.
 - Hiding does not clear the value. The value stays and is submitted.
+- Visibility targets whole fields or whole groups. It never targets a template
+  child; per-item visibility is rejected at parse, because validation and array
+  identity assume uniform rows.
 
 ---
 
 ## 7. Validation
 
-- One JSON Schema, several fragments, assembled at load. AJV, sync rules only.
-- Per-field rules live in `fields[].validation`. Cross-field rules live in
-  `validations[]` and declare `dependsOn`.
+- One JSON Schema, several fragments, assembled when the effective-EDIT set
+  changes. AJV, sync rules only. The resolver validates the full values object;
+  no projection.
+- Per-slot rules live in `fields[].validation`. Cross-field rules live in
+  `validations[]` and declare both a `target` and `dependsOn`.
 - **Compile only effective-EDIT fields.** Hidden and VIEW fields never enter the
-  compiled schema. This is what removes the classic hole where an `if` branch
-  reads a hidden value and forces an error onto a visible field.
-- A cross-field rule whose dependency is hidden is not compiled. That is the
-  agreed meaning of "ignore".
-- `required` is mode-derived, and falls out of the same filter: a field that is
-  not compiled cannot be required.
-- The assembler turns dotted paths into nested `properties` and `items`. This is
-  the only non-trivial code in the validator, and it must handle arrays.
+  compiled schema.
+- Per-slot fragments are restricted to a closed keyword subset and to the
+  field's own binding and descendants. Forbidden: `if`/`then`/`else`, `$ref`,
+  `$data`, `dependent*`, `propertyNames`, `additionalProperties`,
+  `unevaluatedProperties`. Cross-path logic goes through `validations[]`. This
+  is what closes the hidden-sibling hole; filtering fields alone does not.
+- A cross-field rule is compiled only when its target and every dependency are
+  effective EDIT. Otherwise an invisible field can block submit with no message.
+- `required` means non-empty, not merely present: inject `minLength: 1` for
+  strings, `minItems: 1` for arrays, and reject `null` for nullable slots. `0`
+  and `false` stay valid. Whitespace-only strings count as non-empty in v1.
+- The assembler turns dotted paths into nested `properties` and `items`, emits
+  one uniform `items` schema per repeat template, and never emits
+  `additionalProperties: false`.
+- Unmappable errors go to a form-level error banner, never dropped.
 - Run debounced while editing, and again on submit.
 
 Validation is declared per document version, not per session. Recompiling on
@@ -224,11 +262,15 @@ effective-EDIT set.
 ## 8. Submit
 
 - The payload contains every stored value, including values in HIDDEN and VIEW
-  fields. Nothing is stripped on the way out.
+  fields and unbound entity properties. Nothing is stripped on the way out.
 - Complex fields are not part of `properties`. They fetch and submit
   independently, register their own state, and receive the form data read-only.
-- The form orchestrates: validate, then submit the entity and the complex
-  fields, then report the outcome.
+  They do not write form values in v1.
+- The form orchestrates: validate AJV, validate complex fields, settle pending
+  cascades, save the entity, submit complex fields with the saved entity, then
+  reset the baseline. Partial failure is reported per handle; there is no
+  rollback.
+- VIEW submit saves the current data unchanged. It runs no validation.
 
 ---
 
@@ -238,30 +280,36 @@ effective-EDIT set.
   closed until it exists.
 - Async validation rules such as uniqueness or remote checks.
 - Whether a complex field may write into the form, and through which interface.
+- Nested repeat groups, flat scalar arrays and per-item visibility. All are
+  rejected at parse in v1; each needs its own spike.
+- AJV `format` and calendar-aware date validation.
 - Analytics and instrumentation.
 - Multi-form pages and cross-form state.
 
 ---
 
-## 10. Open items and accepted risks
+## 10. Decisions and accepted risks
 
-**Open — decide before the first submit is written**
+**Resolved**
 
-1. **Unbound properties.** If the entity holds a property that no field binds,
-   is it echoed back on submit or dropped? Dropping it means the form silently
-   destroys data it does not render.
-2. **Partial failure.** The entity saves and a complex field fails, or the
-   reverse. Is there a retry, a queue, or a visible partial-success state? No
-   rollback is assumed.
+1. **Unbound properties: preserved.** Seed the whole entity into
+   `defaultValues`, never emit `additionalProperties: false`, and submit
+   `getValues()`. Dropping unbound data is the worse failure.
+2. **Partial failure: reported, no rollback.** The entity saves first; complex
+   fields submit second. `ok` is false with per-handle detail, and failed
+   handles can be retried.
+3. **Complex write interface: none in v1.** Complex fields read form values only.
 
 **Accepted risks**
 
-- **Async cascade sources are not allowlisted.** The administrator who authors
-  the UI schema decides what the client fetches. Config can therefore point the
-  client at arbitrary endpoints. Accepted; recorded here so it is not discovered
-  later as a surprise.
+- **Cascade source choice stays with the document author.** Sources resolve
+  through a frontend registry, so the frontend owns the code, but the document
+  still chooses which registered source runs. Payload minimisation is mandatory:
+  only declared `params` paths leave the client.
 - **No cascade on load.** Stored data can violate the current cascade rules until
   the source is edited.
+- **Backend regexes can backtrack.** Pattern length is capped, but production
+  should precompile patterns server-side or use RE2.
 - **Form size unknown.** Field count, nesting depth and array length have not
   been stated. The design assumes deep nesting and editable arrays; a number
   would change debounce and render strategy, not the rules above.
@@ -272,12 +320,17 @@ effective-EDIT set.
 
 Short list, worth checking against any implementation:
 
-1. Form mode demotes, never promotes.
-2. Permission is default-deny when the key is absent.
-3. A cascade writes to a path; visibility hides a field.
+1. Permission is checked first; form mode and ancestors only demote.
+2. Permission is default-deny when the key is absent or not `EDIT`/`VIEW`.
+3. A cascade writes to a leaf path; visibility hides a field or group.
 4. A cascade only writes into an effective-EDIT target.
-5. Validation compiles only effective-EDIT fields.
+5. Validation compiles only effective-EDIT fields, and the compiled schema
+   observes only their subtrees. Per-item visibility is forbidden.
 6. Hidden values are kept on submit; unsaved edits are discarded on toggling to
    VIEW.
 7. Unknown rule operators and effects fail closed.
 8. The field vocabulary is code and is versioned like an API.
+9. Invalid documents fail closed: no partial form, submit disabled.
+10. `required` means non-empty, not merely present.
+11. Unbound entity properties survive submit.
+12. Cascade sources are registry ids; only declared params leave the client.
