@@ -4,6 +4,8 @@
 Status: analysis complete, no implementation started
 Scope: which form library hosts the runtime-generated form engine
 Last updated: 2026-11-06
+Revision: corrected after source review (v8 beta / v2 alpha / array-key checks)
+Debate: [form-library-evaluation-debate.md](form-library-evaluation-debate.md)
 
 Requirements come from [problem-form-engine.md](problem-form-engine.md). This note
 answers one question: given a form generated at runtime from a backend UI schema,
@@ -18,8 +20,12 @@ which library owns values and errors underneath it.
 | **Headless form state** | values, errors, touched, dirty, submit. You supply every field. | React Hook Form, TanStack Form, React Final Form, Formik, Conform |
 | **Schema renderers** | generation. You supply a schema, it supplies the fields. | JSON Forms, RJSF, Formily, SurveyJS, Form.io, uniforms |
 
-The requirement is generation-shaped, so the second column looks right. It is not,
-because the field vocabulary and the rule semantics are custom.
+The split is a working distinction, not a strict taxonomy: Formily's core is headless,
+RHF has resolver integrations, and several renderers expose headless APIs.
+
+The requirement is generation-shaped, so the second column looks close. It is not a
+direct fit: the field vocabulary and rule semantics are custom, so adopting a renderer
+means converting the document and extending its rule engine.
 
 ---
 
@@ -29,12 +35,12 @@ because the field vocabulary and the rule semantics are custom.
    one name to one value. Multi-slot is a custom component everywhere.
 2. **Shape unknown at compile time.** Type-safe generics assume a known shape. Both
    remaining candidates degrade to `Record<string, unknown>`.
-3. **VIEW and EDIT are separate renderers.** Any library that also renders owns too
-   much.
+3. **VIEW and EDIT are separate renderers.** A library that also renders would own
+   presentation we need to keep separate.
 4. **Validation is compiled from the effective-EDIT subset.** The library must accept
    a rule set that changes when modes change, not a fixed schema at mount.
 5. **Cascades write into other fields by data path.** Needs a reliable `setValue`
-   that does not re-render the tree.
+   that updates only the subscribed fields.
 6. **Complex fields own fetch and submit.** Outside every form library's model.
 
 ---
@@ -43,46 +49,59 @@ because the field vocabulary and the rule semantics are custom.
 
 **React Hook Form.** `useController` per slot, `setValue` by path, `useFieldArray`,
 per-field subscription, and an AJV resolver in `@hookform/resolvers`. Mature, widely
-understood.
+understood. V8 beta is in flight; the current stable is v7.
 
 **TanStack Form.** Field components subscribe individually, validators per field and
-per form, standard-schema support, store-based value model, explicit array API. v1,
-younger, more ceremony per generated field.
+per form, standard-schema support, store-based value model, explicit array API. V1
+stable since 2025; v2 alpha in flight; more ceremony per generated field.
 
 **Formily.** Its `x-reactions` model (`dependencies`, `when`, `fulfill`, async) is the
-closest existing design to the cascade and visibility rules here. Rejected: it brings
-its own schema protocol and would replace the backend's document. Its site returned
-503 during this check, so current maintenance could not be confirmed.
+closest existing design to the cascade and visibility rules here. Rejected: the
+x-reactions design depends on its schema protocol, and adopting that protocol would
+replace the backend's document. The core can be used headless, but then the linkage
+model that makes it interesting is gone. Public maintenance is also stale:
+`@formily/core` 2.3.7 was published 2025-05-15 and the repository's
+last push was 2025-06-21. Its site returned 503 (`usage_exceeded`) during this check,
+but that is a hosting quota, not evidence of abandonment. Formily is Alibaba's unified
+form solution, so large-company use exists; the problem is public maintenance and
+schema ownership.
 
 **JSON Forms.** The closest architecture: renderer registry plus UI schema. Wrong
-vocabulary. Adopting it means converting the backend document and losing multi-slot
-fields. Worth reading for design ideas only.
+vocabulary. Adopting it means converting the backend document into JSON Schema and
+UI Schema and mapping the rule semantics. Custom renderers can still model multi-slot
+fields, so that is not the blocker. Worth reading for design ideas only.
 
-**RJSF.** One widget per property, limited UI schema, awkward for multi-slot. No.
+**RJSF.** One widget per property and a limited UI schema. Custom fields can model
+multi-slot, but the conversion cost is high. No.
 
-**SurveyJS, Form.io.** Full platforms with their own authoring model and licensing.
-Adopting one means the backend no longer owns the schema, which conflicts with the
-central requirement.
+**SurveyJS, Form.io.** Full platforms with their own authoring model. SurveyJS's
+Form Library is MIT, while Creator, Dashboard and PDF Generator are commercial;
+Form.io's JS renderer is MIT, while its platform is commercial. Adopting either
+means translating the backend document into its schema protocol, which conflicts
+with the central requirement.
 
 **Formik, React Final Form, Conform.** Formik re-renders too broadly. Final Form's
-subscription model is good but the ecosystem is quiet and it has no JSON Schema path.
-Conform is server-action oriented, wrong shape for client-side AJV.
+subscription model is good and it has no JSON Schema path; its ecosystem is quieter
+than RHF's but not inactive (2.7M downloads/month, releases in 2026). Conform is
+progressive-enhancement and server-action oriented; client-side AJV needs a custom
+validator.
 
-**React 19 form actions.** Not a fit alone: validation is client-side and fields are
-generated.
+**React 19 form actions.** Not a fit alone: it is an action/transport primitive, not
+a form-state layer, and the fields are generated.
 
 ---
 
 ## 4. The mapping that makes both easy
 
-Both libraries address fields by dotted string names. The backend already sends full
+Both libraries address fields by path string. The backend already sends full
 data paths (`properties.textWithNA.value`). So the library name **is** the binding
-path: no translation layer, no id indirection.
+path: no id indirection.
 
 Two caveats:
 
-- Normalise array syntax to one form (`properties.items[0].value`), because the two
-  libraries parse brackets slightly differently.
+- Both parsers accept dot and bracket syntax (`properties.items[0].value` and
+  `properties.items.0.value`). Normalise once for consistency; the difference is
+  numeric segment handling, not a translation layer.
 - With a runtime shape, typed field names are decorative. Both work on
   `Record<string, unknown>`.
 
@@ -114,15 +133,21 @@ How each requirement lands:
   same for `isNA`. Two subscriptions, one component.
 - **Cascade.** `field.onChange(v)` writes synchronously, so `getValues()` reflects it
   immediately. Run `engine.afterEdit(path)` in the same handler and `setValue` the
-  targets. React batches both into one render, so the cascade wins in the same paint.
+  targets. React batches both into one render, so the cascade is applied in the same
+  update.
 - **Async cascade.** After the fetch, check the target is still effective EDIT, then
   `setValue`. RHF knows nothing about modes; the engine gates the write.
 - **Visibility.** One `useWatch` per rule dependency, not one watcher over the whole
-  form. Cost stays proportional to rules, not to keystrokes.
+  form. Cost stays proportional to the rules that depend on the changed value, not
+  to the whole form.
 - **Mode-derived validation.** The resolver is a function the engine owns. Inside it,
   call the compiled AJV validator for the current EDIT set. RHF does not care how
   errors are produced. Rebuild the validator only when the field-set signature
-  changes.
+  changes. RHF reads the resolver from current options at validation time, so a swap
+  takes effect on the next `trigger()` or validation pass.
+- **Arrays.** `useFieldArray` covers object arrays. V7 rejects flat scalar arrays;
+  wrap them (`{ value: scalar }`) or use v8 beta. The `name` must stay stable for
+  the life of the hook.
 - **VIEW toggle.** `shouldUnregister: false` keeps unmounted values. To strip unsaved
   edits, `reset(savedSnapshot)` then flip the mode.
 - **VIEW submit.** Skip `handleSubmit`, because it validates. Read `getValues()` and
@@ -131,8 +156,11 @@ How each requirement lands:
 Costs:
 
 - AJV error paths (`/properties/x/value`) must be mapped to dotted names.
-- `useFieldArray` injects an `id` into every item unless `keyName` is set, and that
-  id reaches the payload if forgotten.
+- `useFieldArray` adds a render key to `fields` (`id` in v7, `key` in v8). It is not
+  form data and does not reach the payload; use it only as the React key. In v7, a
+  generated `id` shadows a real `id` inside `fields` unless `keyName` is set; read the
+  data id from `getValues()` or configure a separate key. V8 removes `keyName` and
+  keeps data `id`/`key` separate.
 - Subscribing to `formState.errors` at the form root re-renders the root on every
   error change. Read errors through `useController` instead.
 
@@ -160,19 +188,22 @@ How each requirement lands:
 
 - **Multi-slot.** Two `form.Field` components, or `useField` twice. Equivalent.
 - **Cascade.** `field.handleChange(v)` then `setFieldValue(target, value)` in the same
-  handler. Same batching behaviour.
+  handler. React batches both. TanStack's setter validates and runs listeners by
+  default; pass the options to suppress them if the engine already does that work.
 - **Async cascade.** Same engine-side gating.
-- **Visibility.** `useStore(form.store, selector)` per rule dependency. Same shape as
-  `useWatch`.
-- **Validation.** No schema resolver to swap. Attach validators only to effective-EDIT
-  fields, plus one form-level validator for the cross-field assembly. Conceptually
-  cleaner: absent validator, absent rule.
+- **Visibility.** `useSelector(form.store, selector)` per rule dependency (v1.33+).
+  V2 subscribes to `form.atom` instead. Same shape as `useWatch`.
+- **Validation.** There is no dedicated `resolver` prop, but a form-level validator
+  can be a function or a Standard Schema; call AJV from that function and have it
+  read the current EDIT set. Per-field validators are optional, not required.
 - **VIEW toggle.** Values live in the store, not in mounted fields, so unmounting
   keeps them. Stripping requires an explicit reset to the saved snapshot.
-- **Arrays.** `mode="array"` with `pushValue`, `moveValue`, `removeValue`. Nothing is
-  injected into items, so payload hygiene is better, but React keys become your job.
+- **Arrays.** V1 uses `mode="array"` with `pushValue`, `moveValue`, `removeValue`.
+  V2 alpha replaces this with `form.ArrayField` and path-based methods. Nothing is
+  injected into items, so React keys become your job.
 
-Costs: younger, API still settling after v1; fewer large dynamic-form examples; the
+Costs: v1 is stable since March 2025, but v2 alpha (August 2026) changes arrays,
+listeners, subscriptions and validators; fewer named large-company examples; the
 AJV adapter must be written; dynamic field names still require casts.
 
 ---
@@ -183,18 +214,21 @@ AJV adapter must be written; dynamic field names still require casts.
 |---|---|---|
 | Multi-slot field | 2 × `useController` | 2 × `form.Field` |
 | Per-field subscription | yes | yes |
-| Cross-field validation | inside your resolver | per-field and form validators |
-| AJV integration | resolver exists | write a small wrapper |
-| Mode-derived rule set | swap resolver | attach validators conditionally |
-| Array item identity | injects `id`, strip or configure | nothing injected |
+| Cross-field validation | inside your resolver | form-level or per-field validators |
+| AJV integration | resolver exists | call AJV from a form-level validator |
+| Mode-derived rule set | swap resolver | form-level validator reads current EDIT set |
+| Array item identity | render key (`id` v7, `key` v8), not payload | render key is yours; nothing injected |
+| Flat scalar arrays | v7 no, v8 beta yes | not restricted to objects |
 | Error paths | map AJV paths to names | same mapping |
-| Maturity | very high | v1, smaller ecosystem |
+| Maturity | very high; v8 beta in flight | v1 stable since 2025; v2 alpha in flight |
 | Library footprint | one hook, proxies | store plus contexts |
 
-**The `onChangeListenTo` advantage does not apply here.** It solves dependent
-*function* validators. Cross-field rules live in AJV, which validates the whole object
-anyway, so the feature that most distinguishes TanStack Form is largely irrelevant to
-this design.
+**`onChangeListenTo` is not the deciding feature.** In v1 it reruns a field's
+validators when a listed field changes; v2 renames it `watchFields`. It helps
+dependent field validators. Cross-field rules here live in AJV, which validates the
+whole object at form level, so the feature is not needed for this design. It is not
+"the feature that most distinguishes" TanStack Form, and its absence does not decide
+the library choice.
 
 ---
 
@@ -206,43 +240,90 @@ Reasons, in order:
 
 1. Validation is schema-based, so the resolver hook is a better fit than per-field
    validators: it is exactly one place to inject the assembled AJV.
-2. Array handling is mature; the injected `id` is a known, one-line fix.
-3. Ecosystem and debugging matter more than model elegance for an engine that will be
-   read by people who did not write it.
+2. Object-array handling is mature, and the render key is not a payload problem. The
+   v7 limitation is flat scalar arrays; v8 beta adds them. If flat arrays are in
+   scope, either wrap them or accept the v8 beta.
+3. Adoption and debugging matter more than model elegance for an engine that will be
+   read by people who did not write it. RHF has the stronger enterprise evidence:
+   Thoughtworks Technology Radar "adopted since 2025", 209M downloads/month, and
+   enterprise sponsors including Principal. TanStack Form is stable and widely used
+   (18.7M downloads/month) but no named large-company case study was found.
 
-Choose TanStack Form only if cross-field rules move out of AJV and into function
-validators. That is a product decision, not a library one.
+Choose TanStack Form if flat scalar arrays are in scope and RHF v8 beta is not
+acceptable, or if its store and typing model outweigh RHF's resolver ecosystem. AJV
+can be used with either. Both libraries have a major in flight: RHF v8 beta and
+TanStack v2 alpha. Budget the migration either way.
 
 ---
 
 ## 9. Spike checklist
 
-One page, one `InputWithNA`, one nested array. One day.
+One page, one `InputWithNA`, one nested array, one flat scalar array. One day.
 
 1. Does typing in one field re-render only that field? Count renders.
 2. Can one field write `value` and `isNA` without a whole-form update?
 3. Does an unmounted field survive a VIEW toggle with its value intact?
 4. Does swapping the resolver when the EDIT set changes re-validate correctly?
+5. Does a flat scalar array (`string[]`) add, remove and reorder without changing
+   the payload shape?
+6. Does a row with a real `id` keep that `id` in `getValues()` while the render key
+   stays separate?
 
-Any two of four failing is enough to reconsider the choice. Checks 3 and 4 are the
+Any two failing is enough to reconsider the choice. Checks 3, 4, 5 and 6 are the
 ones that would change the verdict.
 
 ---
 
 ## 10. Sources and caveats
 
-- TanStack Form React quick start, fetched 2026-11-06.
+- TanStack Form v1 docs: quick start, arrays, validation, linked fields.
   https://tanstack.com/form/latest/docs/framework/react/quick-start
-- React Hook Form `useController`, `useFieldArray`, `resolver` documentation.
-  https://react-hook-form.com/docs
+  https://tanstack.com/form/latest/docs/framework/react/guides/arrays
+  https://tanstack.com/form/latest/docs/framework/react/guides/validation
+  https://tanstack.com/form/latest/docs/framework/react/guides/linked-fields
+- TanStack Form v2 alpha announcement and migration guide.
+  https://tanstack.com/blog/announcing-tanstack-form-v2-alpha
+  https://tanstack.com/form/alpha/docs/migrate-from-v1
+- TanStack Form `useStore` deprecation, v1.33.1.
+  https://github.com/TanStack/form/blob/main/packages/react-form/CHANGELOG.md
+  https://github.com/TanStack/form/issues/2203
+- React Hook Form `useController`, `useFieldArray`, `useForm`, resolver docs.
+  https://react-hook-form.com/docs/usecontroller
+  https://react-hook-form.com/docs/usefieldarray
+  https://react-hook-form.com/docs/useform
+- React Hook Form v8 migration notes (`keyName` removed, `id` renamed `key`, flat arrays).
+  https://react-hook-form.com/migrate-v7-to-v8
+- RHF maintainer note that the `useFieldArray` key is render-only, not form data.
+  https://github.com/orgs/react-hook-form/discussions/6621
 - `@hookform/resolvers` AJV resolver.
-  https://github.com/react-hook-form/resolvers
-- JSON Forms, RJSF, Formily and SurveyJS documentation for the renderer comparison.
+  https://github.com/react-hook-form/resolvers#ajv
+- Formily package and repository history.
+  https://www.npmjs.com/package/@formily/core
+  https://github.com/alibaba/formily
+- JSON Forms custom renderers; RJSF custom fields.
+  https://jsonforms.io/docs/tutorial/custom-renderers
+  https://rjsf-team.github.io/react-jsonschema-form/docs/advanced-customization/custom-widgets-fields
+- SurveyJS licensing; Form.io JS repository.
+  https://surveyjs.io/licensing
+  https://github.com/formio/formio.js
+- Adoption signals: RHF site/Thoughtworks Radar and npm downloads; TanStack showcase.
+  https://react-hook-form.com/
+  https://www.npmjs.com/package/react-hook-form
+  https://tanstack.com/showcase
+  https://www.npmjs.com/package/@tanstack/react-form
 
 Caveats:
 
-- Formily's site returned 503 during this check; its verdict rests on prior
-  knowledge and should be re-verified before adopting it.
-- Exact `keyName`, `shouldUnregister` and TanStack `reset` behaviour vary by version.
-  Confirm all three in the spike rather than trusting this note.
+- Versions checked: RHF 7.91.0 and 8.0.0-beta.5; TanStack Form 1.33.5 and
+  2.0.0-alpha.3; Formily 2.3.7.
+- Formily's public maintenance is stale: `@formily/core` 2.3.7 (2025-05-15), last
+  repository push 2025-06-21. Its site returns 503 (`usage_exceeded`), which is a
+  hosting quota, not a maintenance signal. Alibaba's internal use may be current.
+- React Hook Form v8 beta changes the field-array key API: `keyName` is removed and
+  `id` becomes `key`. TanStack Form v2 alpha changes arrays, listeners, stores and
+  validators. Confirm the target major in the spike.
+- Exact `shouldUnregister` and TanStack `reset` behaviour vary by version. Confirm
+  both in the spike rather than trusting this note.
 - No benchmark was run. Render claims describe subscription scope, not measured cost.
+- Adoption evidence is not a fitness proof. RHF has the stronger enterprise signal;
+  TanStack Form has no named large-company case study in the sources checked.
