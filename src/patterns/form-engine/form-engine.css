@@ -1,0 +1,334 @@
+/* Form-engine demo. Colours come from the global variables in src/index.css. */
+.fe-demo {
+  padding: 16px;
+  max-width: 900px;
+  margin: 0 auto;
+  text-align: left;
+}
+
+.fe-demo-header {
+  margin-bottom: 16px;
+}
+
+.fe-demo-title {
+  margin: 0 0 6px;
+  font-size: 22px;
+}
+
+.fe-form {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  margin: 16px 0;
+  background: var(--bg);
+}
+
+.fe-form-header {
+  margin-bottom: 12px;
+}
+
+.fe-form-title {
+  margin: 0 0 4px;
+  font-size: 16px;
+  color: var(--text-h);
+}
+
+.fe-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.fe-select {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+}
+
+.fe-fields {
+  display: grid;
+  gap: 14px;
+}
+
+.fe-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fe-label {
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.fe-required {
+  color: var(--accent);
+}
+
+.fe-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+}
+
+.fe-input:focus-visible,
+.fe-select:focus-visible {
+  outline: 2px solid var(--accent-border);
+  outline-offset: 1px;
+}
+
+.fe-input[aria-invalid='true'] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-border);
+}
+
+.fe-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.fe-checkbox {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.fe-help,
+.fe-muted {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.fe-error {
+  color: var(--accent);
+  font-size: 14px;
+}
+
+.fe-view .fe-value {
+  padding: 8px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--text-h);
+  background: var(--code-bg);
+}
+
+.fe-banner,
+.fe-panel {
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 12px 0;
+}
+
+.fe-panel ul,
+.fe-banner ul {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+
+.fe-panel-error {
+  border-color: var(--accent);
+}
+
+.fe-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin: 12px 0;
+}
+
+.fe-mode-toggle {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.fe-mode-toggle .fe-button[aria-pressed='true'] {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--text-h);
+}
+
+.fe-submit-ok {
+  border-color: var(--border);
+}
+
+.fe-submit-error {
+  border-color: var(--accent);
+}
+
+.fe-submit-result p {
+  margin: 0 0 6px;
+}
+
+.fe-announce {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.fe-form-title:focus-visible {
+  outline: 2px solid var(--accent-border);
+  outline-offset: 2px;
+}
+
+.fe-form-actions button,
+.fe-render-counter button {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--code-bg);
+  color: var(--text-h);
+  font: inherit;
+  cursor: pointer;
+}
+
+.fe-button {
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--code-bg);
+  color: var(--text-h);
+  font: inherit;
+  cursor: pointer;
+}
+
+.fe-button:hover:not(:disabled) {
+  border-color: var(--accent-border);
+}
+
+.fe-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.fe-button-danger:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.fe-repeat {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--code-bg);
+}
+
+.fe-repeat-header,
+.fe-repeat-row-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.fe-repeat-error {
+  margin: 8px 0 0;
+}
+
+.fe-repeat-rows {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.fe-repeat-row {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--bg);
+}
+
+.fe-repeat-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.fe-repeat-fields {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.fe-form-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.fe-render-counter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.fe-render-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 14px;
+}
+
+.fe-degraded {
+  border: 1px dashed var(--accent);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.fe-degraded-note {
+  color: var(--accent);
+  font-size: 14px;
+}
+
+.fe-boundary-error {
+  border: 1px solid var(--accent);
+  background: var(--accent-bg);
+  border-radius: 6px;
+  padding: 10px;
+  color: var(--text-h);
+}
+
+.fe-notes {
+  font-size: 15px;
+}
+
+.fe-notes ul {
+  margin: 6px 0 0;
+}
+
+@media (max-width: 640px) {
+  .fe-demo {
+    padding: 10px;
+  }
+
+  .fe-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

@@ -1,8 +1,10 @@
 import RelatedAssetsDemo from './patterns/related-asset-fetching/RelatedAssetsDemo'
+import FormEngineDemo from './patterns/form-engine/FormEngineDemo'
 
 // Demo switchboard. Every pattern lives under src/patterns/<name> and is independent.
 const demos = [
   { id: 'related-asset-fetching', label: 'Related-asset fetching', Component: RelatedAssetsDemo },
+  { id: 'form-engine', label: 'Config-driven form engine', Component: FormEngineDemo },
 ]
 
 function App() {
